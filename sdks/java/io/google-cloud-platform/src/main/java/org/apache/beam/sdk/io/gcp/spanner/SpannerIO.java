@@ -74,6 +74,7 @@ import org.apache.beam.sdk.coders.SerializableCoder;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.ChangeStreamMetrics;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.action.ActionFactory;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.dao.DaoFactory;
+import org.apache.beam.sdk.io.gcp.spanner.changestreams.dofn.CleanUpReadChangeStreamDoFn;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.dofn.DetectNewPartitionsDoFn;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.dofn.InitializeDoFn;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.dofn.PostProcessingMetricsDoFn;
@@ -1597,12 +1598,18 @@ public class SpannerIO {
             .as(SpannerChangeStreamOptions.class)
             .setMetadataTable(partitionMetadataTableName);
 
-        return input
-            .apply(Impulse.create())
+        PCollection<byte[]> impulseOut = input.apply(Impulse.create());
+        PCollection<DataChangeRecord> results =
+          impulseOut
             .apply("Initialize the connector", ParDo.of(initializeDoFn))
             .apply("Detect new partitions", ParDo.of(detectNewPartitionsDoFn))
             .apply("Read change stream partition", ParDo.of(readChangeStreamPartitionDoFn))
             .apply("Gather metrics", ParDo.of(postProcessingMetricsDoFn));
+
+        impulseOut
+            .apply(Wait.on(results))
+            .apply(ParDo.of(new CleanUpReadChangeStreamDoFn(daoFactory)));
+        return results;
       }
     }
   }
